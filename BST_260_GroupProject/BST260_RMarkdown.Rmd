@@ -1,0 +1,584 @@
+---
+title: "Introduction to Data Science Group Project:<br> Until Next Thyme"
+author: "Keya Joshi, Jessica Liu, & Audrey R Murchland"
+date: "12/15/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r Pacman statement, include=FALSE}
+if (!require("pacman")) install.packages("pacman", repos='http://cran.us.r-project.org'); library(pacman)
+
+p_load("tidyverse", "rvest", "dplyr", "xlm2", "stringr", "sf", "ggplot2", "viridis", "readr", "factoextra", "cluster")
+
+load("BST260_workspace.RData")
+```
+
+##Overview and Motivation
+Yelp has emerged as a popular site for restaurant reviews and ratings. These sites have integrated  features that help users look up and select restaurants based on various filters as well as map locations. However, this feature does not allow you to directly compare some of the filtered characteristics. We hope to create an application that will allow users to see the more mathematical correlations and relationships between factors such as price, rating, and reviews of restaurants in their neighborhood to make the best decision possible when choosing to go out to eat. 
+
+We hope to take data from Yelp and create interactive analysis features that could be applied to restaurants in a specific Boston area. We also hope to run cluster analyses to see how certain restaurants may be similarly grouped and display this in our final analysis through Shiny.
+
+We had originally planned to use this Yelp data to create a predictive algorithm to help people choose restaurants based on wait times. But once we evaluated how Yelp stored information on wait times, we realized that these fields were embedded within multiple layers that were time-updating and it was, therefore, not feasible to utilize these data for the purposes of this process. This could possibly be a future project for a larger, more complex Yelp data science project. 
+
+We were drawn to this problem because we are all passionate about food, and have had many times when we have been stuck asking ourselves the question "So, where are we going to eat tonight?" We would like to find a way to help friends and family efficiently plan their evening and food options in Boston.
+
+##Related Work
+Our tool is very similar to existing websites such as Yelp and Grubhub (and other restaurant/food sites) that we use frequently, as they all have features to filter and select by the variables we are looking at. 
+
+However, our analysis is focused specifically around Brookline and spends more time looking at correlations, distributions of relationships within the area, and clustering of restaurant characteristics. We wanted to better understand how restaurants may be related to one another in the place where we currently live and frequent restaurants. 
+
+##Initial Questions
+1. What features contribute to restaurant wait time (location, type of cuisine, cost, reviews)?
+2. Do restaurants in the same geographic location, that share a common feature (e.g. cost, type of cuisine) have similar wait times?
+3. What is the distribution of wait times within a given area? By time of day? By time of week (weekday vs. weekend)?
+4. Are there certain restaurants that have consistently high predicted wait times?
+5. How are certain characteristics of restaurants, such as price, rating, and location, potentially related to the clustering and correlation of different restaurants?
+
+
+##Data
+
+###Data Scraping
+In order to gather the relevant data, we used webscraping to scrape restaurant information from Yelp.  We restricted our restaurant search to restaurants within a 2 mile radius of Brookline whose price ranges were categorized between \$ and \$\$\$. Approximately 80 restaurants were identified on Yelp that met these criteria. The following restaurant features were identified that were available on each restaurant Yelp page that were relevant and important features to explore for the project: restaurant name, type of food, location, contact information, price range, hours, number of reviews, average reviewer rating, and top reviewer comments. 
+
+First, we explored webscraping using the web harvesting package `rvest`  within R.  Using the following code we were able to identify and pull the specific elements of a single restaurant's Yelp page after identifying the relevant nodes using [SelectorGadget](https://selectorgadget.com). 
+
+```{r scraping example1}
+
+#Import Resturaunt's Yelp Page into R
+h <- read_html("https://www.yelp.com/biz/dumpling-palace-boston")
+  #Resturaunt Name
+  resturaunt <- h %>% html_node(".heading--inline__373c0__1F-Z6") %>% html_text()
+  #Number of Reviews
+  num_reviews <- h %>% html_node(".text-size--large__373c0__1568g") %>% html_text()
+  #Hidden Element Fields for Other Resturaunt Features
+  info <- h %>% html_nodes(".text-align--left__373c0__2pnx_") %>% html_text()
+    address1 <- info[35]
+    address2 <- info[36]
+    price <- info[12]
+    description1 <- info[13]
+    description2 <- info[14]
+    phone <- info[395]
+    M_hrs <- info[39]
+    T_hrs <- info[41]
+    W_hrs <- info[43]
+    Th_hrs <- info[45]
+    Fr_hrs <- info[47]
+    Sat_hrs <- info[49]
+    Sun_hrs <- info[51]
+
+#Creating Dataframe
+exp1.data <- data.frame(resturaunt, num_reviews, address1, address2, price, description1, description2,
+                        phone, M_hrs, T_hrs, W_hrs, Th_hrs, Fr_hrs, Sat_hrs, Sun_hrs)
+head(exp1.data)
+```
+
+However, upon writing a function that would pull these specific nodes of information for any Yelp restaurant page address that was provided, two important issues were discovered. First, the order (and therefore corresponding node number) of the underlying nodes saved within each website page's html function changed for each restaurant based on the data that was available on their page. If some features were additionally available or if, more often, there were features that were missing for specific restaurant, the underlying order value of the nodes changed.  Therefore, hard coding for each specific restaurant page's website to reflect the order of their codes was required.
+
+```{r scraping example2}
+#Example Function Showing Issues with running a function to pull each resturaunt's Yelp page information.
+get_info <- function(url){
+  #Pulling in Yelp Resturaunt Page
+  h <- read_html(url)
+    #Resturaunt Name
+    resturaunt <- h %>% html_node(".heading--inline__373c0__1F-Z6") %>% html_text()
+    #Number of Reviews
+    num_reviews <- h %>% html_node(".text-size--large__373c0__1568g") %>% html_text()
+    #Hidden Element Fields for Other Resturaunt Features
+    info <- h %>% html_nodes(".text-align--left__373c0__2pnx_") %>% html_text()
+      address1 <- info[35]
+      address2 <- info[36]
+      price <- info[12]
+      description1 <- info[13]
+      description2 <- info[14]
+      phone <- info[395]
+      M_hrs <- info[39]
+      T_hrs <- info[41]
+      W_hrs <- info[43]
+      Th_hrs <- info[45]
+      Fr_hrs <- info[47]
+      Sat_hrs <- info[49]
+      Sun_hrs <- info[51]
+  ex2.data <<- data.frame(resturaunt, num_reviews, address1, address2, price, description1, description2, phone, M_hrs, T_hrs, W_hrs, Th_hrs, Fr_hrs, Sat_hrs, Sun_hrs)
+  return(ex2.data)
+}
+
+#Testing Function to Show Issues With Nodes
+get_info("https://www.yelp.com/biz/the-paris-creperie-brookline-3")
+
+```
+
+Second, it was not possible to use this coding structure in order to loop through all ~80 restaurants that met the initial search criteria efficiently while also pulling their restaurant-specific data.  As a result, we found and utilized [ScrapeStorm](https://www.scrapestorm.com), a free-standing application to scrape the specific restaurant data we were interested in for each restaurant-specific page of our [~80 resturaunts who met the initial Yelp search criteria](https://www.yelp.com/search?find_desc=&find_loc=Brookline%2C%20MA&l=g%3A-71.1678886414%2C42.3042295307%2C-71.116733551%2C42.3423052786&attrs=RestaurantsPriceRange2.1%2CRestaurantsPriceRange2.2%2CRestaurantsPriceRange2.3).
+
+  The following fields were scraped using this application:
+  
+1. Restaurant Name
+2. html link to Yelp Restaurant-Specific Page
+3. Top reviewer comments
+4. Type of restaurant
+5. Number of reviews
+6. Restaurant extras (i.e. Delivery Available)
+7. Hours of Operation
+8. Phone Number
+9. Address 
+
+Since we were also interested in creating an interactive map as part of our Shiny application, we then used [geocodi](https://www.geocod.io), an available online application, to then geocode the latitude and longitude of each restaurant based on their scraped address and saved these variables to the dataset.
+
+Finally, since Yelp saves the average reviewer rating as a time-updating image, we wrote a looping function that extracts the text value of the rating from the saved image for each of the restaurant-specific Yelp pages, using their scraped html link, using the following function:
+
+```{r scraping example3, eval=FALSE}
+#Pulling Scraped and Geocoded Data
+yelpdata <- read_csv("Yelp_Brookline_Data.csv")
+
+#Writing Loop Function to pull yelp rating for each resturaunt in the dataframe
+f = function(x, output){
+  link = x[2]
+  h <- read_html(link)
+  doc <- xml2:::xml_document((h %>% html_node(".overflow--hidden__373c0__8Jq2I"))$doc)
+  output <- encodeString(vapply(xml_children(doc), as.character, FUN.VALUE = character(1)))
+  start <- str_locate(output[2], "aria-label=\"\\d")[,2]
+  sapply(start, function(s) substr(output[2], s, s +3))
+}
+
+#calling function and saving a vector of the ratings
+ratings <- apply(yelpdata, 1, f)
+#adding the vector of ratings to the dataframe
+yelpdata$rating <- ratings
+
+#saving the dataset
+write_csv(yelpdata, "Yelp_Brookline_Data_AM_120119.csv")
+
+##You are welcome to run the function above by changing eval to 'TRUE', but we are not allowing it to run automatically since the function takes a long time to run since it is scraping the data from ~80 individual webpages, one at a time.
+```
+  
+###Data Cleaning: Scraped Data
+The following code was then used to clean the scraped dataset.
+```{r scraping dataclean1, eval=FALSE}
+### make sure not to read strings in as factors
+tmp <- read_csv("Yelp_Brookline_Data_AM_120119.csv")
+head(tmp)
+
+tmp_use <- tmp %>% select(resturaunt, num_reviews, food_type, description_1, description_2, price, Mon_hrs, Tues_hrs, Wed_hrs, Thu_hrs, Fri_hrs, Sat_hrs, Sun_hrs, full_address, Latitude, Longitude, rating)
+
+tmp_use %>% select(rating) %>% unique()
+
+## fix the rating column 
+## first remove all characters after the space
+## then change this to numeric 
+
+tmp_use$rating_num <- as.numeric(gsub('([0-9]+) .*', '\\1', tmp_use$rating))
+table(tmp_use$rating_num)
+
+tmp_use %>% select(price) %>% unique()
+class(tmp_use$price)
+summary(as.factor(tmp_use$price))
+## this will just take the dollar signs and turn them 1-3
+tmp_use$price_num <- as.numeric(as.factor(tmp_use$price))
+table(tmp_use$price_num) ## will see that there are 28 1s which correspond to 28 $ restaurants 
+
+## trying to get special characters removed 
+tmp_use$restaurant_name <-iconv(tmp_use$resturaunt, to = "ASCII//TRANSLIT")
+
+tmp_use %>% select(food_type) %>% unique()
+tmp_use %>% select(description_1) %>% unique()
+## remove all the commas 
+tmp_use$description <- gsub(",", "", tmp_use$description_1)
+## remove all commas 
+tmp_use %>% select(description_2) %>% unique()
+tmp_use$description2 <- gsub(",", "", tmp_use$description_2)
+
+## do same thing with number of reviews
+tmp_use$N_reviews<- as.numeric(gsub('([0-9]+) .*', '\\1', tmp_use$num_reviews))
+
+## select relevant columns now:
+cleaned <- tmp_use %>% select(restaurant_name, N_reviews, food_type, description, description2, price_num, Mon_hrs, Tues_hrs, Wed_hrs, Thu_hrs, Fri_hrs, Sat_hrs, Sun_hrs, full_address, Latitude, Longitude, rating_num, price)
+
+## rename columns to be relevant
+colnames(cleaned) <- c("Name", "N_reviews", "Type", "Keyword1", "Keyword2", "Price", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Address", "Latitude", "Longitude", "Rating", "Price_factor")
+
+colnames(cleaned)
+
+
+write.csv(cleaned, "cleaned.csv", row.names = F)
+```
+
+When cleaning the data, we had to think about what analyses we were most interested in and how we could manipulate the scraped data to make it something we could use. Two of the main variables we were interested in were price and rating. These two variables included a lot of extra special characters that would not allow us to use the data in its numeric form. As a result, we had to remove all special characters (outside of ".") for the ratings to change the variable to a numeric type. For the price, the data was scraped to include "\$" which would not be useful in conducting analysis of the data. As a result, we changed all the dollar signs into the respective categories ("\$" = 1, "\$$" = 2, etc). Finally we wanted to rename all the columns so they could be easily interpreted if someone else wanted to use the dataset. 
+
+###Data Cleaning: Mapping Data
+The following code was used to clean and prepare the mapping dataset.
+
+```{r scraping dataclean2, eval=FALSE}
+library(sf)
+tmp <- read_sf("CENSUS2010TRACTS_POLY.shp")
+data <- read_csv("cleaned.csv")
+
+DT_sf = st_as_sf(data, coords = c("Longitude", "Latitude"), crs = "+proj=longlat +datum=NAD83 +no_defs" )
+
+## brookline census tracts: https://www.brooklinema.gov/DocumentCenter/View/1402/Census-Tract-11x17-PDF
+
+## boston census tracts: http://www.bostonplans.org/getattachment/d09af00c-2268-437b-9e40-fd06d0cd20a2
+
+## cambridge: https://www.cambridgema.gov/~/media/Files/CDD/Maps/Census/cddmap_census_2010_ct_bounds.pdf?la=en
+
+brighton <- c(5.02, 5.03, 5.04, 4.01, 4.02, 3.02, 7.01, 6.02, 6.01, 2.02, 2.01, 3.01, 1)
+
+allston <- c(7.04, 7.03, 8.02, 8.03, 9815.01)
+
+fenway <- c(101.03, 101.04, 102.04, 102.03, 104.08, 104.03, 104.04, 104.05)
+
+lma <- c(103, 808.01, 809, 810.01, 811)
+
+jp <- c(1207, 812, 1205, 1206, 9818, 1204, 1203.01, 1201.03, 1201.05, 1201.04, 1202.01, 9810, 1101.03, 9811, 1103.01)
+
+westroxbury <- c(1106.01, 1302, 1301, 1303, 1304.02, 1304.04, 1304.06, 9807)
+
+brookline <- c(4012, 4011, 4010, 4009, 4008, 4007, 4006, 4005, 4004, 4003, 4002, 4001)
+
+hyde_park <- c(1401.02, 1402.01, 1402.02, 1403, 1401.07, 1401.05, 1404)
+
+dedham <- c(4021.01, 4025, 4024, 4021.02, 4022, 4023)
+
+roslindale <- c(1106.07, 1104.01, 1103.01, 9811, 1102.01, 1104.03, 1105.02, 1105.01, 1401.06)
+
+southend <- c(708, 707, 706, 703, 709, 705, 704.02, 711.01, 712.01)
+
+beacon_hill <- c(9817, 201.01, 202, 203.02)
+
+westend <- c(203.01)
+
+downtown <- c(203.03, 303, 701.01, 702)
+
+northend <- c(301, 302, 304, 305)
+
+southboston <- c(612, 607, 606, 608, 611.01, 610, 604, 603.01, 605.01, 602, 601.01)
+
+dorchester <- c(907, 913, 912, 911, 910.01, 909.01, 914, 915, 903, 918, 917, 916, 902, 901, 919, 920, 924, 923, 922, 921.01, 1001, 1005, 1006.01, 1002, 1003, 1004, 1008, 1007, 1006.03)
+
+roxbury <- c(806.01, 805, 804.01, 801, 803, 906, 814, 817, 818, 904, 813, 815, 819, 820, 821, 9803)
+
+cambridge <- c(3541, 3539, 3537, 3542)
+
+names <- c(brighton, allston, fenway, lma, jp, roxbury, brookline, hyde_park, dedham, roslindale, southend, beacon_hill, westend, downtown, northend, southboston, dorchester, westroxbury, cambridge)
+
+tmp$NAME10 <- as.numeric(tmp$NAME10)
+
+test <- tmp %>% dplyr::filter(NAME10 %in% names)
+
+
+## creates a column that corresponds to the location of the shape file. 
+
+test$ids <- ifelse(test$NAME10 %in% brighton, "brighton", 
+                   ifelse(test$NAME10 %in% allston, "allston", 
+                          ifelse(test$NAME10 %in% fenway, "fenway",
+                                 ifelse(test$NAME10 %in% lma, "lma", 
+                                        ifelse(test$NAME10 %in% jp, "jp", 
+                                               ifelse(test$NAME10 %in% westroxbury, "westroxbury", 
+                                                      ifelse(test$NAME10 %in% brookline, "brookline", 
+                                                             ifelse(test$NAME10 %in% hyde_park, "hydepark", 
+                                                                    ifelse(test$NAME10 %in% dedham, "dedham", 
+                                                                           ifelse(test$NAME10 %in% roslindale, "roslindale", 
+                                                                                  ifelse(test$NAME10 %in% southend, "southend", 
+                                                                                         ifelse(test$NAME10 %in% beacon_hill, "beaconhill", 
+                                                                                                ifelse(test$NAME10 %in% westend, "westend", 
+                                                                                                       ifelse(test$NAME10 %in% downtown, "downtown", 
+                                                                                                              ifelse(test$NAME10 %in% northend, "northend", 
+                                                                                                                     ifelse(test$NAME10 %in% southboston, "southboston", 
+                                                                                                                            ifelse(test$NAME10 %in% dorchester, "dorchester", 
+                                                                                                                                   ifelse(test$NAME10 %in% roxbury, "roxbury", 
+                                                                                                                                          ifelse(test$NAME10 %in% cambridge, "cambridge", NA)))))))))))))))))))
+
+
+#tmp2$Latitude <- as.numeric(gsub("\\+", "", tmp2$INTPTLAT10))
+#tmp2$Longitude <-as.numeric(sub("0", "", tmp2$INTPTLON10))
+#tmp2$Longitube2 <- gsub("\\-", "", tmp2$Longitude)
+#tmp2 <- tmp %>% filter(TRACTCE10 %in% tracts)
+#tmp3 <- left_join(x = tmp2, y = data, by=c("Latitude", "Longitude")) 
+
+
+ggplot() +
+  geom_sf(data = test, aes(fill = ids)) +
+  geom_sf(data = DT_sf, col = "white", size = 3) + 
+  scale_fill_manual(values = c(viridis(19, 
+                                       option = "A", 
+                                       direction = -1))) + 
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        line = element_blank(),
+        rect = element_blank(),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 16, face = "bold") , 
+        plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) + 
+  labs(fill = "Neighborhoods")
+  
+
+
+## genius: https://gist.github.com/andrewheiss/0580d6ffec37b6bc4d0ae8e77bf30956
+lat <- data.frame()
+long <- data.frame()
+for(i in 1:nrow(DT_sf)){
+  lat[i,1] <- DT_sf$geometry[[i]][1]
+  long[i,1] <- DT_sf$geometry[[i]][2]
+}
+
+data2 <- data.frame(data, lat, long)
+
+
+tmp <- data2 %>% sf::st_as_sf(coords = c("V1", "V1.1"), crs = 4326)
+
+tmp_transformed <- tmp %>% st_transform(crs = 102003)
+
+tmp_transformed_with_lat_lon <- cbind(tmp_transformed, st_coordinates(tmp_transformed))
+
+## testing if this works 
+
+ggplot() +
+  geom_sf(data = test, aes(fill = ids)) +
+  geom_point(data = tmp_transformed_with_lat_lon, aes(x = X, y = Y), col = "red", size = 3) + 
+  coord_sf(crs = 102003) + 
+  scale_fill_manual(values = c(viridis(19, 
+                                       option = "A", 
+                                       direction = -1))) + 
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        line = element_blank(),
+        rect = element_blank(),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 16, face = "bold") , 
+        plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) + 
+  labs(fill = "Neighborhoods")
+```
+
+Linking the shape file to the latitude and longitude of each restaurant proved to be difficult. Due to the small sample size, depending on how you filtered you would get zero observations. As a result, you could not save the layer with the points as a sf object because sf objects cannot have zero observations. To fix this, we took the latitude/longitude from each restaurant and recalibrated the x-y coordinate to a different reference point which we also added to the ggplot object with coord_sf so that now points could be aligned with the shape file, which originally was not possible if you tried plotting the points directly on the sf object, as the reference of the latitude/longitude was not the same as the shapefile we downloaded. By adjusting to the same reference coordinate, we were able to overlay the latitude/longitude as points of each restaurant on the Boston/Brookline neighborhood map. 
+
+
+##Exploratory Analysis
+
+We began by looking at how restaurants could potentially cluster together based on variables we deemed important in deciding which restaurants to eat at( price, location, and overall rating). We ran a k-means clustering analysis, adjusting the number of clusters to maximize the Gap statstic.
+
+```{r exp analysis1, , eval=FALSE}
+dat <- read.csv("cleaned.csv")
+colnames(dat)
+
+index <- c(6, 15, 16, 17)
+
+clusters3 <- kmeans(dat[,index], 3) #clusters based on rating, lat long, price k = 3
+str(clusters3)
+clusters5 <- kmeans(dat[,index], 5) #clusters based on rating, lat long, price k = 5
+str(clusters5)
+clusters2 <- kmeans(dat[,index], 2) #clusters based on rating, lat long, price k = 2
+str(clusters2)
+clusters4 <- kmeans(dat[,index], 4) #clusters based on rating, lat long, price k = 4
+str(clusters4)
+clusters6 <- kmeans(dat[,index], 6) #clusters based on rating, lat long, price k = 6
+str(clusters6)
+clusters7 <- kmeans(dat[,index], 7) #clusters based on rating, lat long, price k = 7
+str(clusters7)
+clusters8 <- kmeans(dat[,index], 8) #clusters based on rating, lat long, price k = 7
+str(clusters8)
+clusters9 <- kmeans(dat[,index], 9) #clusters based on rating, lat long, price k = 7
+str(clusters9)
+clusters10 <- kmeans(dat[,index], 10) #clusters based on rating, lat long, price k = 7
+str(clusters10)
+clusters11 <- kmeans(dat[,index],11) #clusters based on rating, lat long, price k = 7
+str(clusters11)
+clusters12 <- kmeans(dat[,index], 12) #clusters based on rating, lat long, price k = 12 (number of neighborhoods based on census map)
+str(clusters12)
+```
+
+```{r exp analysis2, eval = F}
+## test plot for k-means clustering (compare to elbow and gap method)
+ssc <- data.frame(
+  kmeans = c(2, 3,4, 5, 6, 7, 8, 9, 10, 11, 12), 
+  within_ss = c(mean(clusters2$withinss), mean(clusters3$withinss), mean(clusters4$withinss), mean(clusters5$withinss), mean(clusters6$withinss), mean(clusters7$withinss), mean(clusters8$withinss), mean(clusters9$withinss), mean(clusters10$withinss), mean(clusters11$withinss), mean(clusters12$withinss)), 
+  between_ss = c(mean(clusters2$betweenss), mean(clusters3$betweenss), mean(clusters4$betweenss), mean(clusters5$betweenss), mean(clusters6$betweenss), mean(clusters7$betweenss), mean(clusters8$betweenss), mean(clusters9$betweenss), mean(clusters10$betweenss), mean(clusters11$betweenss), mean(clusters12$betweenss))
+)
+
+ssc %<>% gather(., key = "measurement", value = value, -kmeans)
+
+ssc %>% 
+  ggplot(., aes(x=kmeans, y=log(value), fill = measurement)) + 
+  geom_bar(stat = "identity", position = "dodge") + 
+  ggtitle("Cluster Model Comparison") + 
+  xlab("Number of Clusters") + 
+  ylab("Log10 Total Sum of Squares") + 
+  scale_x_discrete(name = "Number of Clusters", 
+                   limits = c("0", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"))
+
+```
+
+We found that having 7 clusters seemed to minimize total within variation without making the between variation too high. And overall, adding more clusters will naturally decrease within variation, as having more clusters will make the groupings smaller and items within those smaller groups more similar to one another. 
+
+We then tried looking at how specifying an nstart would influence the k-means clustering analysis and which nstart value would additionally minimize total within variation.
+
+```{r exp analysis3, eval=TRUE}
+dat <- read.csv("cleaned.csv")
+index <- c(6, 15, 16, 17)
+
+clusters14 <- kmeans(dat[,index], 3, nstart = 1) #clusters based on rating, lat long, price k = 3, nstart = 1, totwithinss = 12.48224
+str(clusters14)
+
+clusters11 <- kmeans(dat[,index], 3, nstart = 5) #clusters based on rating, lat long, price k = 3, nstart = 5, totwithinss = 12.48224
+str(clusters11)
+
+clusters12 <- kmeans(dat[,index], 3, nstart = 10) #clusters based on rating, lat long, price k = 3, nstart = 10, totwithinss = 12.48224
+str(clusters12)
+
+clusters13 <- kmeans(dat[,index], 3, nstart = 15) #clusters based on rating, lat long, price k = 3, nstart = 15, totwithinss = 12.48224
+str(clusters13)
+
+```
+
+We saw that specifying any nstart provided the same totwithinss value of 12.48224, which is lower than not specifying any nstart value at all. Therefore, moving forward, we set our nstart to equal 2 when conducting any k-means cluster analysis as a default, and that increasing the nstart beyond that is not necessary to impact our cluster analysis or minimize within group variation.
+
+We then plotted the clustering results to graphically represent our analysis. Using both the elbow method and the Gap statistic (plotted below), we found that the number of clusters that, for the gap method, for example, maximized the gap statistic was 7. 
+
+```{r exp analysis4, eval=TRUE}
+set.seed(31)
+
+fviz_nbclust(dat[,index], kmeans, method = "wss", k.max = 12) +
+  ggtitle("Elbow Method") + 
+  theme_light() + 
+      theme(panel.grid.minor = element_blank(), 
+            panel.grid.major = element_blank(),
+            axis.title.x = element_text(size=16), 
+            axis.title.y = element_text(size=16), 
+            legend.title = element_text(size = 16),
+            legend.text = element_text(size = 12),
+            plot.title = element_text(hjust = 0.5, size = 16),
+            axis.text.x=element_text(angle=0, hjust=1, size = 14),
+            axis.text.y = element_text(size = 14)) + 
+  geom_vline(xintercept = 7, col = "blue", lty = 2)
+
+tmp <- clusGap(dat[,index], FUN = kmeans, K.max = 12, B = 50) 
+fviz_gap_stat(tmp) + 
+  ggtitle("Gap Statistic") + 
+  theme_light() + 
+      theme(panel.grid.minor = element_blank(), 
+            panel.grid.major = element_blank(),
+            axis.title.x = element_text(size=16), 
+            axis.title.y = element_text(size=16), 
+            legend.title = element_text(size = 16),
+            legend.text = element_text(size = 12),
+            plot.title = element_text(hjust = 0.5, size = 16),
+            axis.text.x=element_text(angle=0, hjust=1, size = 14),
+            axis.text.y = element_text(size = 14))
+  
+
+```
+We wanted to try two different methods to determine the optimal number of clusters. The first method we tried was the elbow method. For this method the sum of squares for k = n number of clusters is calculated. Here we looked for a change of slope from steep to shallow, forming an elbow. We know this method is not exact so we tried an additional method, the Gap statistic. Here, this statistic compares the total within intra-cluster variation for different values of k using the expected values under the null as a reference distribution [(source)](https://towardsdatascience.com/10-tips-for-choosing-the-optimal-number-of-clusters-277e93d72d92). The estimated optimal number of clusters will maximize the gap statistic (so this means the structure of the cluster is very different from a random, uniform distribution of points). For both these methods, k=7 was chosen as an optimal number of clusters. 
+
+```{r exp analysis5, eval=TRUE}
+#7 clusters, price/latlong/rating, nstart = 2
+index <- c(6, 15, 16, 17)
+clusters7 <- kmeans(dat[,index], 7, nstart = 2)
+str(clusters7)
+
+km.out=kmeans(dat[,index], 7, nstart = 2)
+plot(dat[,index], col=(km.out$cluster+1), main="K-Means Clustering Results with K=7", pch=20, cex=2)
+```
+
+We also wanted to look at how number of reviews may influence clustering, so we added that into our k-means clustering analysis at a slightly later step. 
+
+```{r exp analysis6, eval=TRUE}
+index3 <- c(2, 6, 15, 16, 17)
+clusters15 <- kmeans(dat[,index3], 7, nstart = 2) 
+str(clusters15)
+
+km.out=kmeans(dat[,index3], 7, nstart = 2)
+plot(dat[,index3], col=(km.out$cluster+1), main="K-Means Clustering Results with K=7", pch=20, cex=2)
+```
+
+Other descriptive analysis on associations between variables was done through violin plots, comparing rating, price, and number of reviews with on another. We used these plots of explore if we wanted to include them in our Shiny app. 
+
+```{r exp analysis7, eval=TRUE}
+ggplot() + 
+  geom_violin(aes(x=dat$Rating, y=dat$N_reviews)) + 
+  theme_light() + 
+    theme(panel.grid.minor = element_blank(), 
+          panel.grid.major = element_blank(),
+          axis.title.x = element_text(size=16), 
+          axis.title.y = element_text(size=16), 
+          legend.title = element_text(size = 16),
+          legend.text = element_text(size = 12),
+          plot.title = element_text(hjust = 0.5, size = 16),
+          axis.text.x=element_text(angle=0, hjust=1, size = 14),
+          axis.text.y = element_text(size = 14)) + 
+  labs(x = "Rating", y = "Number of Reviews") 
+
+ggplot() + 
+  geom_violin(aes(x=dat$Price, y=dat$N_reviews)) + 
+  scale_x_discrete("Price", c(1,2,3), c(1,2,3), c(1,2,3)) + 
+  theme_light() + 
+    theme(panel.grid.minor = element_blank(), 
+          panel.grid.major = element_blank(),
+          axis.title.x = element_text(size=16), 
+          axis.title.y = element_text(size=16), 
+          legend.title = element_text(size = 16),
+          legend.text = element_text(size = 12),
+          plot.title = element_text(hjust = 0.5, size = 16),
+          axis.text.x=element_text(angle=0, hjust=1, size = 14),
+          axis.text.y = element_text(size = 14)) + 
+  labs(x = "Price", y = "Number of Reviews")
+
+ggplot() + 
+  geom_violin(aes(x=dat$Price, y=dat$Rating)) + 
+  scale_x_discrete("Price", c(1,2,3), c(1,2,3), c(1,2,3)) + 
+  theme_light() + 
+    theme(panel.grid.minor = element_blank(), 
+          panel.grid.major = element_blank(),
+          axis.title.x = element_text(size=16), 
+          axis.title.y = element_text(size=16), 
+          legend.title = element_text(size = 16),
+          legend.text = element_text(size = 12),
+          plot.title = element_text(hjust = 0.5, size = 16),
+          axis.text.x=element_text(angle=0, hjust=1, size = 14),
+          axis.text.y = element_text(size = 14)) + 
+  labs(x = "Price", y = "Rating")
+
+tmp_transformed_with_lat_lon %>% 
+    select(Price, Rating, N_reviews) %>% 
+    ggplot() + 
+    geom_violin(aes(x = as.factor(Price), y = N_reviews, fill = as.factor(Price))) + 
+    scale_fill_viridis(discrete = T, option = "A", direction = -1, begin = 0.4, end = 0.8) + 
+    theme_light() + 
+    theme(panel.grid.minor = element_blank(), 
+          panel.grid.major = element_blank(),
+          axis.title.x = element_text(size=16), 
+          axis.title.y = element_text(size=16), 
+          legend.title = element_text(size = 16),
+          legend.text = element_text(size = 12),
+          plot.title = element_text(hjust = 0.5, size = 16),
+          axis.text.x=element_text(angle=0, hjust=1, size = 14),
+          axis.text.y = element_text(size = 14)) + 
+      labs(x = "Price", y = "Number of Reviews", fill = "Price") + 
+      guides(fill = FALSE)
+```
+
+##Final Analysis
+
+###Tab 1: Plotting Restaurants on a Map  
+\n
+This tab allows users to select a specific location and then outputs the location of the resturant on a map (upper figure) and also provides a table for users to get more information about the restaurants that appear on the map, where they can then select specific attributes they are interested in, including the type of food, the cost, the rating, and the hours the restaurant is open. 
+
+
+###Tab 2: Varying k-means for Clustering Restaurants 
+\n 
+This tab allows users to vary the number of clusters to input into a k-means clustering algorithm provided by the k-means function in the R package 'stats' and outputs a plot that shows how clusters are partitioned using price, latitude, longitude, number of reviews, and rating as input variables. The algorithm aims to partition the restaurants into k groups, which is user defined, such that the sum of squares from the points to the assigned cluster centers is minimized. This is a way for users to visualize how changing the number of clusters changes how restaurants are classified in relation to one another. 
+
+###Tab 3: Best k-means Cluster on a Map
+\n 
+This tab allows users to see how restaurants are clustered on a map based on the most optimum output from the k-means clustering analysis. This map shows that restaurants are not just clustered geographically as one might expect, but that restaurants placed in the same cluster might be far apart but still share common features (including price or rating). 
+
+###Tab 4: Descriptive statistics 
+\n 
+This tab allows the audience to select the categories of number of dollar signs they would want in addition to the minimum number of reviews, and then they will see a histogram of how many restaurants fall into the different ratings categories.  The purpose of this interactive histogram is to allow the audience to better visualize and play around with how price and number of reviews can influence the distribution of ratings of restaurants that fit the criterion entered. Overall, this interactive histogram does show how having more number of reviews does seem to increase the ratings. Price has less of a direct assocation with relation to rating; however, this may be due to the fact that there are only 3 categories for price and we only have 80 data points. 
+
+Since we are looking at price and ratings, which are two categorical variables, we decided to use violin plots to look more at how price, rating, and number of reviews are related to one another. The violin plots allow us to see the distribution of reviews by price and also allow us to look at ratings by price. These violin plots show us that irrespective of price, many restaurants have a smaller number of reviews. Looking at the number of reviews for each price category, the most expensive restaurants (\$\$\$) tend to have either very low number of ratings or high number of ratings. One star restaurants tend to have a lower average number of ratings but this could also because there are many more \$ restaurants available. Finally looking at price vs. rating, there are no \$\$\$ restaurants that have a 5 star review and there are also no \$ that have a 5 star review. If we had a large sample size, we can already see that the distribution of ratings by price follows a normal distribution and this will become more and more normal as the number of ratings increases. These figures mirror what we would have expected based on our real world experiences of frequenting restaurants. 
